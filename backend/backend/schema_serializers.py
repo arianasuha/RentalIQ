@@ -24,6 +24,9 @@ class LoginResponseSerializer(RefreshResponseSerializer):  # pylint: disable=W02
         choices=["Default", "Admin", "Superuser", "UnAuthorized"],
         help_text="The resolved primary role/group of the authenticated user.",
     )
+
+class LogoutRequestSerializer(serializers.Serializer):  # pylint: disable=W0223
+    refresh = serializers.CharField(required=True)
     
     
 class RefreshRequestSerializer(serializers.Serializer):
