@@ -18,7 +18,7 @@ from datetime import timedelta
 from backend.mixins import http_method_mixin
 from backend.schema_serializers import (
     RefreshRequestSerializer,
-    RefreshResponseSerializer,
+    LogoutRequestSerializer,
     LoginRequestSerializer,
     LoginResponseSerializer,
     ErrorResponseSerializer, 
@@ -141,7 +141,97 @@ def check_update_request_data(user_instance, request):
 
     return current_user
 
-
+# @extend_schema(
+#     # General documentation for the POST method
+#     summary="Refresh Access Token",
+#     description=(
+#         "Exchanges a valid refresh token for a new access token. "
+#         "Also returns the refresh token and updated user metadata."
+#     ),
+#     tags=["Authentication"],
+#     request=RefreshRequestSerializer,
+#     responses={
+#         status.HTTP_200_OK: OpenApiResponse(
+#             response=LoginResponseSerializer,
+#             description=(
+#                 "Successful token refresh. "
+#                 "Returns a new access token and the same refresh token.",
+#             ),
+#         ),
+#         status.HTTP_400_BAD_REQUEST: OpenApiResponse(
+#             response=ErrorResponseSerializer,
+#             description=(
+#                 "Bad Request. Occurs on a missing 'refresh' token or an invalid token format."
+#             ),
+#         ),
+#         status.HTTP_401_UNAUTHORIZED: OpenApiResponse(
+#             response=ErrorResponseSerializer,
+#             description=(
+#                 "Unauthorized. "
+#                 "Occurs when the refresh token is expired, invalid, or blacklisted.",
+#             ),
+#         ),
+#         status.HTTP_500_INTERNAL_SERVER_ERROR: OpenApiResponse(
+#             response=ErrorResponseSerializer,
+#             description="Internal Server Error.",
+#         ),
+#     },
+#     # Provide concrete examples for better API reference UI
+#     examples=[
+#         OpenApiExample(
+#             name="Successful Token Refresh",
+#             response_only=True,
+#             status_codes=["200"],
+#             value={
+#                 "access_token": (
+#                     "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9."
+#                     "A-NEW-SHORT-LIVED-JWT-TOKEN-PART-1",
+#                 ),
+#                 "refresh_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUz1NiJ9.A-VERY-LONG-JWT-TOKEN-PART-2",
+#                 "user_id": 101,
+#                 "user_role": "Agent",
+#                 # Note: TimeDelta is 5 minutes for refresh endpoint in your code
+#                 "access_token_expiry": (now() + timedelta(minutes=5)).isoformat(),
+#             },
+#         ),
+#         OpenApiExample(
+#             name="Missing Refresh Token Error",
+#             response_only=True,
+#             status_codes=["400"],
+#             value={"error": "Tokens are required"},
+#         ),
+#         OpenApiExample(
+#             name="Invalid/Expired Refresh Token Error",
+#             response_only=True,
+#             status_codes=["400"],
+#             value={"error": "Invalid tokens"},
+#         ),
+#         OpenApiExample(
+#             name="Invalid Refresh Token Error",
+#             response_only=True,
+#             status_codes=["401"],
+#             value={"error": "Invalid Refresh Token"},
+#         ),
+#         OpenApiExample(
+#             name="Invalid Session Error",
+#             response_only=True,
+#             status_codes=["400"],
+#             value={"error": "Invalid Session"},
+#         ),
+#         OpenApiExample(
+#             name="Invalid Credentials Error",
+#             response_only=True,
+#             status_codes=["400"],
+#             value={"error": "Invalid credentials"},
+#         ),
+#         OpenApiExample(
+#             name="Account Deactivated Error",
+#             response_only=True,
+#             status_codes=["400"],
+#             value={"error": "Account is deactivated. Contact your admin"},
+#         ),
+#     ],
+# )
 class RefreshTokenView(APIView):
     permission_classes = [AllowAny]
 
@@ -336,7 +426,8 @@ class LoginView(APIView):
                 if failed_attempts >= 5:
                     target_user.is_active = False
                     target_user.save() 
-                        
+                    cache.delete(cache_key)
+                    
                     return Response(
                         {"detail": "This account has been deactivated due to too many failed login attempts. Please contact the administrator to reactivate your account."},
                         status=status.HTTP_403_FORBIDDEN
@@ -377,13 +468,46 @@ class LoginView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
+@extend_schema(
+    summary="User Logout",
+    description=("Logout by blacklisting the refresh token."),
+    tags=["Authentication"],
+    request=LogoutRequestSerializer,
+    responses={
+        status.HTTP_200_OK: OpenApiResponse(
+            response=LoginResponseSerializer,
+            description="Successful logout.",
+        ),
+        status.HTTP_400_BAD_REQUEST: OpenApiResponse(
+            response=ErrorResponseSerializer,
+            description=("Bad Request. Missing tokens."),
+        ),
+        status.HTTP_500_INTERNAL_SERVER_ERROR: OpenApiResponse(
+            response=ErrorResponseSerializer,
+            description="Internal Server Error.",
+        ),
+    },
+    examples=[
+        OpenApiExample(
+            name="Successful Logout",
+            response_only=True,
+            status_codes=["200"],
+            value={"success": "Logged out successfully"},
+        ),
+        OpenApiExample(
+            name="Missing Tokens Error",
+            response_only=True,
+            status_codes=["400"],
+            value={"error": "Tokens are required"},
+        ),
+    ],
+)
 class LogoutView(APIView):
     """Logout by blacklisting the refresh token"""
 
     permission_classes = [AllowAny]
 
-    def post(self, request, *args, **kwargs):
+    def post(self, request, *args, **kwargs):  #check token validity
         try:
             refresh_token = request.data.get("refresh_token")
 
