@@ -53,7 +53,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'core_db',
     'auth_api',
-    'equipment_api',
+    'rental_api',
     'corsheaders',
     'rest_framework',
     'drf_spectacular',
