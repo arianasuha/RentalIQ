@@ -3,6 +3,7 @@ Database models.
 """
 from phonenumber_field.modelfields import PhoneNumberField
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils.text import slugify
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
@@ -149,7 +150,18 @@ class Equipment(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
     average_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0.00)
     total_rentals = models.PositiveIntegerField(default=0)
+    slug = models.SlugField(max_length=100, unique=True, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Protection against double-clicks and concurrent requests
+        constraints = [
+            models.UniqueConstraint(
+                'owner', 
+                Lower('title'), 
+                name='unique_owner_equipment_title'
+            )
+        ]
 
     def __str__(self):
         return self.title
