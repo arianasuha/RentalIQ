@@ -14,8 +14,7 @@ from drf_spectacular.utils import (
     OpenApiExample,
     OpenApiResponse,
 )
-from datetime import timedelta
-from backend.mixins import http_method_mixin
+from backend.utils import block_put_method
 from backend.schema_serializers import (
     RefreshRequestSerializer,
     LogoutRequestSerializer,
@@ -756,7 +755,7 @@ class UserViewSet(viewsets.ModelViewSet):
         """Allow only users to update their own profile. SuperUser can update any profile.
         Patch method allowed, Put method not allowed"""
 
-        not_allowed_method = http_method_mixin(request, *args, **kwargs)
+        not_allowed_method = block_put_method(request, *args, **kwargs)
 
         if not_allowed_method:
             return not_allowed_method
