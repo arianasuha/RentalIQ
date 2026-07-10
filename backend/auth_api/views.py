@@ -16,6 +16,7 @@ from drf_spectacular.utils import (
 )
 from backend.utils import block_put_method
 from backend.schema_serializers import (
+    RefreshResponseSerializer,
     RefreshRequestSerializer,
     LogoutRequestSerializer,
     LoginRequestSerializer,
@@ -140,100 +141,31 @@ def check_update_request_data(user_instance, request):
 
     return current_user
 
-# @extend_schema(
-#     # General documentation for the POST method
-#     summary="Refresh Access Token",
-#     description=(
-#         "Exchanges a valid refresh token for a new access token. "
-#         "Also returns the refresh token and updated user metadata."
-#     ),
-#     tags=["Authentication"],
-#     request=RefreshRequestSerializer,
-#     responses={
-#         status.HTTP_200_OK: OpenApiResponse(
-#             response=LoginResponseSerializer,
-#             description=(
-#                 "Successful token refresh. "
-#                 "Returns a new access token and the same refresh token.",
-#             ),
-#         ),
-#         status.HTTP_400_BAD_REQUEST: OpenApiResponse(
-#             response=ErrorResponseSerializer,
-#             description=(
-#                 "Bad Request. Occurs on a missing 'refresh' token or an invalid token format."
-#             ),
-#         ),
-#         status.HTTP_401_UNAUTHORIZED: OpenApiResponse(
-#             response=ErrorResponseSerializer,
-#             description=(
-#                 "Unauthorized. "
-#                 "Occurs when the refresh token is expired, invalid, or blacklisted.",
-#             ),
-#         ),
-#         status.HTTP_500_INTERNAL_SERVER_ERROR: OpenApiResponse(
-#             response=ErrorResponseSerializer,
-#             description="Internal Server Error.",
-#         ),
-#     },
-#     # Provide concrete examples for better API reference UI
-#     examples=[
-#         OpenApiExample(
-#             name="Successful Token Refresh",
-#             response_only=True,
-#             status_codes=["200"],
-#             value={
-#                 "access_token": (
-#                     "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9."
-#                     "A-NEW-SHORT-LIVED-JWT-TOKEN-PART-1",
-#                 ),
-#                 "refresh_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUz1NiJ9.A-VERY-LONG-JWT-TOKEN-PART-2",
-#                 "user_id": 101,
-#                 "user_role": "Agent",
-#                 # Note: TimeDelta is 5 minutes for refresh endpoint in your code
-#                 "access_token_expiry": (now() + timedelta(minutes=5)).isoformat(),
-#             },
-#         ),
-#         OpenApiExample(
-#             name="Missing Refresh Token Error",
-#             response_only=True,
-#             status_codes=["400"],
-#             value={"error": "Tokens are required"},
-#         ),
-#         OpenApiExample(
-#             name="Invalid/Expired Refresh Token Error",
-#             response_only=True,
-#             status_codes=["400"],
-#             value={"error": "Invalid tokens"},
-#         ),
-#         OpenApiExample(
-#             name="Invalid Refresh Token Error",
-#             response_only=True,
-#             status_codes=["401"],
-#             value={"error": "Invalid Refresh Token"},
-#         ),
-#         OpenApiExample(
-#             name="Invalid Session Error",
-#             response_only=True,
-#             status_codes=["400"],
-#             value={"error": "Invalid Session"},
-#         ),
-#         OpenApiExample(
-#             name="Invalid Credentials Error",
-#             response_only=True,
-#             status_codes=["400"],
-#             value={"error": "Invalid credentials"},
-#         ),
-#         OpenApiExample(
-#             name="Account Deactivated Error",
-#             response_only=True,
-#             status_codes=["400"],
-#             value={"error": "Account is deactivated. Contact your admin"},
-#         ),
-#     ],
-# )
+
 class RefreshTokenView(APIView):
     permission_classes = [AllowAny]
 
+
+    @extend_schema(
+        summary="Refresh Access and Refresh Tokens",
+        description="Pass a valid refresh token to get a new access token, an updated refresh token, and user role metadata.",
+        request=RefreshRequestSerializer,
+        responses={
+            200: RefreshResponseSerializer,
+            400: OpenApiExample(
+                "Bad Request",
+                value={"detail": "Invalid Token."}
+            ),
+            401: OpenApiExample(
+                "Unauthorized",
+                value={"detail": "Token is invalid or expired."}
+            ),
+            403: OpenApiExample(
+                "Forbidden",
+                value={"detail": "This account is deactivated."}
+            ),
+        }
+    )
     def post(self, request, *args, **kwargs):
         request_serializer = RefreshRequestSerializer(data=request.data)
         if not request_serializer.is_valid():

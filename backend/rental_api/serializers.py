@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from core_db.models import Category, Equipment
+from django.contrib.auth.models import User
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -67,6 +68,12 @@ class EquipmentListSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+class OwnerSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='username') 
+
+    class Meta:
+        model = User 
+        fields = ['id', 'name']
 
 class EquipmentRetrieveSerializer(serializers.ModelSerializer):
     """Get Equipment by id serializer."""

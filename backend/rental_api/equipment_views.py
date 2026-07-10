@@ -9,6 +9,7 @@ from core_db.models import Equipment
 from backend.schema_serializers import ErrorResponseSerializer
 from backend.utils import block_put_method
 from .serializers import EquipmentDetailSerializer, EquipmentListSerializer, EquipmentRetrieveSerializer
+from .paginations import EquipmentPagination
 
 
 class EquipmentViewSet(viewsets.ModelViewSet):
@@ -17,6 +18,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
     """
     queryset = Equipment.objects.all()
     serializer_class = EquipmentDetailSerializer
+    pagination_class = EquipmentPagination
     http_method_names = ['get', 'post', 'patch', 'delete']
 
 
@@ -31,7 +33,9 @@ class EquipmentViewSet(viewsets.ModelViewSet):
     
 
     def get_queryset(self):
-        return Equipment.objects.select_related('category').all()
+        if self.action == "retrieve":
+            return Equipment.objects.select_related('owner', 'category').all()
+        return Equipment.objects.all()
     
 
     def get_serializer_class(self):
@@ -326,3 +330,9 @@ class EquipmentViewSet(viewsets.ModelViewSet):
             )
 
         return response
+    
+
+
+#pagination
+#throttling
+#owner's name should be present in retrieve rather than id 
