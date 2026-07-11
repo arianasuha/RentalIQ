@@ -8,7 +8,12 @@ from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
 from core_db.models import Equipment
 from backend.schema_serializers import ErrorResponseSerializer
 from backend.utils import block_put_method
-from .serializers import EquipmentDetailSerializer, EquipmentListSerializer, EquipmentRetrieveSerializer
+from .serializers import (
+    EquipmentDetailSerializer, 
+    EquipmentListSerializer, 
+    EquipmentRetrieveSerializer,
+    EquipmentImageSerializer,
+)
 from .paginations import EquipmentPagination
 
 
@@ -34,7 +39,9 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         if self.action == "retrieve":
-            return Equipment.objects.select_related('owner', 'category').all()
+            return Equipment.objects.select_related('owner', 'category').all().prefetch_related('images').all()
+        if self.action == "list":
+            return Equipment.objects.prefetch_related('images').all()
         return Equipment.objects.all()
     
 
@@ -125,21 +132,23 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary="Create New Equipment",
-        description="Allows administrative users to register a new equipment item into the inventory.",
+        description="Allows authenticated users to register a new equipment item with up to 3 images.",
         tags=["Equipment Management"],
-        request=EquipmentDetailSerializer,
+        request={
+            "multipart/form-data": EquipmentDetailSerializer
+        },
         responses={
             status.HTTP_201_CREATED: OpenApiResponse(
-                response=ErrorResponseSerializer,
+                response=EquipmentDetailSerializer,
                 description="Equipment registered successfully.",
             ),
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(
                 response=ErrorResponseSerializer,
-                description="Bad Request. Missing fields or invalid reference IDs (e.g., bad category ID).",
+                description="Bad Request. Missing fields, invalid price structures, or exceeded 3-image threshold.",
             ),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(
                 response=ErrorResponseSerializer,
-                description="Forbidden. User lacks administrative permissions.",
+                description="Forbidden. User unauthenticated or hit weekly creation thresholds.",
             )
         },
         examples=[
@@ -147,19 +156,22 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 name="Successful Creation Response",
                 response_only=True,
                 status_codes=["201"],
-                value={"detail": "Equipment successfully created."}
+                value={
+                    "detail": "Equipment successfully created.", 
+                    "data": {"id": 1, "title": "Heavy Duty Drill", "images": []}
+                }
             ),
             OpenApiExample(
-                name="Validation Error",
+                name="Validation Error (Too many images)",
                 response_only=True,
                 status_codes=["400"],
-                value={"category": ["Invalid pk \"999\" - object does not exist."]}
+                value={"uploaded_images": ["You can upload a maximum of 3 images per equipment."]}
             ),
             OpenApiExample(
-                name="Permission Blocked Error",
+                name="Weekly Limit Reached Cap",
                 response_only=True,
                 status_codes=["403"],
-                value={"detail": "Authentication credentials were not provided."}
+                value={"detail": "You have reached your limit of 4 equipment creations per week."}
             )
         ]
     )
@@ -237,17 +249,23 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary="Update Equipment (Partial)",
-        description="Updates subset fields of a specific equipment item. Admin exclusive.",
+        description="Updates field subsets or adds new images (up to 3 total) to a specific equipment item.",
         tags=["Equipment Management"],
-        request=EquipmentDetailSerializer,
+        # ✅ FIX: Apply it here too!
+        request={
+            "multipart/form-data": EquipmentDetailSerializer
+        },
         responses={
             status.HTTP_200_OK: OpenApiResponse(
-                response=ErrorResponseSerializer,
                 description="Equipment patched successfully.",
+            ),
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(
+                response=ErrorResponseSerializer,
+                description="Bad Request. Invalid data modifications or exceeded image cap limits.",
             ),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(
                 response=ErrorResponseSerializer,
-                description="Forbidden. Non-admin operations blocked.",
+                description="Forbidden. Action blocked if user is not the recorded owner.",
             ),
             status.HTTP_404_NOT_FOUND: OpenApiResponse(
                 response=ErrorResponseSerializer,
@@ -259,7 +277,10 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 name="Successful Partial Update Response",
                 response_only=True,
                 status_codes=["200"],
-                value={"detail": "Equipment patch applied successfully."}
+                value={
+                    "detail": "Equipment successfully updated.",
+                    "data": {"id": 1, "title": "Modified Title Name"}
+                }
             )
         ]
     )
