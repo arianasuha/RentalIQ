@@ -154,6 +154,7 @@ class Equipment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        ordering = ['-created_at']
         # Protection against double-clicks and concurrent requests
         constraints = [
             models.UniqueConstraint(

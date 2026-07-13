@@ -3,7 +3,7 @@ from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, PermissionDenied
-from django.http import Http404
+from django.core.files.storage import default_storage
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
 from core_db.models import Equipment
 from backend.schema_serializers import ErrorResponseSerializer
@@ -135,17 +135,37 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         description="Allows authenticated users to register a new equipment item with up to 3 images.",
         tags=["Equipment Management"],
         request={
-            "multipart/form-data": EquipmentDetailSerializer
+            "multipart/form-data": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "integer", "description": "ID of the category"},
+                    "title": {"type": "string", "maxLength": 255},
+                    "description": {"type": "string"},
+                    "purchase_price": {"type": "number", "format": "double"},
+                    "daily_rent": {"type": "number", "format": "double"},
+                    "rent_advance": {"type": "number", "format": "double"},
+                    "status": {
+                        "type": "string", 
+                        "enum": ["available", "rented", "maintenance"],
+                        "default": "available"
+                    },
+                    "uploaded_images": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "binary"
+                        },
+                        "description": "Upload up to 3 images for this equipment."
+                    }
+                },
+            },
         },
         responses={
             status.HTTP_201_CREATED: OpenApiResponse(
                 response=EquipmentDetailSerializer,
                 description="Equipment registered successfully.",
             ),
-            status.HTTP_400_BAD_REQUEST: OpenApiResponse(
-                response=ErrorResponseSerializer,
-                description="Bad Request. Missing fields, invalid price structures, or exceeded 3-image threshold.",
-            ),
+            status.HTTP_400_BAD_REQUEST: ErrorResponseSerializer,
             status.HTTP_403_FORBIDDEN: OpenApiResponse(
                 response=ErrorResponseSerializer,
                 description="Forbidden. User unauthenticated or hit weekly creation thresholds.",
@@ -181,7 +201,10 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         """
         self._check_weekly_creation_limit(request.user)
 
+        print("-------------------------------------------")
+        print(request.data)
         serializer = self.get_serializer(data=request.data)
+
         serializer.is_valid(raise_exception=True)
         
         self._validate_uniqueness(request.user, serializer.validated_data)
@@ -251,7 +274,6 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         summary="Update Equipment (Partial)",
         description="Updates field subsets or adds new images (up to 3 total) to a specific equipment item.",
         tags=["Equipment Management"],
-        # ✅ FIX: Apply it here too!
         request={
             "multipart/form-data": EquipmentDetailSerializer
         },
@@ -340,11 +362,15 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 {"error": "You are not authorized to delete this equipment."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        
+        images_to_delete = [img.image for img in equipment_instance.images.all()]
+
         response = super().destroy(request, *args, **kwargs)
 
-
         if response.status_code == status.HTTP_204_NO_CONTENT:
+            for file_obj in images_to_delete:
+                if file_obj and default_storage.exists(file_obj.name):
+                    default_storage.delete(file_obj.name)
+
             return Response(
                 {"success": f"{title} deleted successfully."},
                 status=status.HTTP_200_OK,

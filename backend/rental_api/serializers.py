@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from core_db.models import Category, Equipment
+from core_db.models import Category, Equipment, EquipmentImage
 from django.contrib.auth.models import User
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -9,14 +9,28 @@ class CategorySerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'slug']
 
 
+class EquipmentImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EquipmentImage
+        fields = ['id', 'image', 'uploaded_at']
+
+
 class EquipmentDetailSerializer(serializers.ModelSerializer):
+    images = EquipmentImageSerializer(many=True, read_only=True)
+    uploaded_images = serializers.ListField(
+        child=serializers.ImageField(max_length=100000, allow_empty_file=False, use_url=False),
+        write_only=True,
+        required=False,
+        help_text="Upload up to 3 images for this equipment."
+    )
 
     class Meta:
         model = Equipment
         fields = [
             'id', 'owner', 'category', 'title', 
             'description', 'purchase_price', 'daily_rent', 
-            'rent_advance', 'status', 'average_rating', 'total_rentals', 'slug','created_at'
+            'rent_advance', 'status', 'average_rating', 'total_rentals', 'slug','created_at', 'images',
+            'uploaded_images'
         ]
         read_only_fields = ['owner', 'average_rating', 'total_rentals', 'slug']
 
@@ -47,13 +61,52 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
 
         if errors:
             raise serializers.ValidationError(errors)
+        
+
+        uploaded_images = attrs.get('uploaded_images', [])
+        new_images_count = len(uploaded_images)
+        
+        # Scenario A: Creation (self.instance is None)
+        if not self.instance:
+            if new_images_count == 0:
+                raise serializers.ValidationError({
+                    'uploaded_images': "You must upload at least one image when creating equipment."
+                })
+        
+        # Scenario B: Updating (self.instance exists)
+        existing_images_count = 0
+        if self.instance:
+            existing_images_count = self.instance.images.count()
+        
+        total_expected_images = existing_images_count + new_images_count
+        if total_expected_images > 3:
+            raise serializers.ValidationError({
+                'uploaded_images': f"You can upload a maximum of 3 images. Current: {existing_images_count}, Added: {new_images_count}."
+            })
 
         return attrs
+    
 
+    def create(self, validated_data):
+        images_data = validated_data.pop('uploaded_images', [])
+        
+        equipment = Equipment.objects.create(**validated_data)
+        for image_data in images_data:
+            EquipmentImage.objects.create(equipment=equipment, image=image_data)
+        return equipment
+
+    def update(self, instance, validated_data):
+        images_data = validated_data.pop('uploaded_images', [])
+        instance = super().update(instance, validated_data)
+        
+        for image_data in images_data:
+            EquipmentImage.objects.create(equipment=instance, image=image_data)
+        return instance
     
 
 class EquipmentListSerializer(serializers.ModelSerializer):
     category_name = serializers.ReadOnlyField(source='category.name')
+    thumbnail_image = serializers.SerializerMethodField()
 
     class Meta:
         model = Equipment
@@ -64,9 +117,20 @@ class EquipmentListSerializer(serializers.ModelSerializer):
             'daily_rent', 
             'status', 
             'average_rating', 
+            'thumbnail_image',
             'slug'
         ]
         read_only_fields = fields
+
+    def get_thumbnail_image(self, obj):
+        latest_image = obj.images.order_by('-uploaded_at').first()
+        
+        if latest_image:
+            request = self.context.get('request')
+            if request is not None:
+                return request.build_absolute_uri(latest_image.image.url)
+            return latest_image.image.url
+        return None
 
 class OwnerSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source='username') 
@@ -78,13 +142,15 @@ class OwnerSerializer(serializers.ModelSerializer):
 class EquipmentRetrieveSerializer(serializers.ModelSerializer):
     """Get Equipment by id serializer."""
     category = CategorySerializer(read_only=True)
+    images = EquipmentImageSerializer(many=True, read_only=True)
 
     class Meta:
         model = Equipment
         fields = [
             'id', 'owner', 'category', 'title', 
             'description', 'purchase_price', 'daily_rent', 
-            'rent_advance', 'status', 'average_rating', 'total_rentals', 'slug','created_at'
+            'rent_advance', 'status', 'average_rating', 'total_rentals', 'slug','created_at',
+            'images'
         ]
 
         read_only_fields = fields
