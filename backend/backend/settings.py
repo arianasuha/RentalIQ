@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'phonenumber_field',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
 ]
 
 PHONENUMBER_DEFAULT_REGION = 'BD'
