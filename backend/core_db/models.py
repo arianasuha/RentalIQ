@@ -146,12 +146,18 @@ class Equipment(models.Model):
     description = models.TextField(blank=True, null=True)
     purchase_price = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     daily_rent = models.DecimalField(max_digits=8, decimal_places=2)
+    thumbnail_image = models.ImageField(
+        upload_to='equipment_thumbnails/', 
+        null=False, 
+        blank=False
+    )
     rent_advance = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
     average_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0.00)
     total_rentals = models.PositiveIntegerField(default=0)
     slug = models.SlugField(max_length=100, unique=True, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    #location and geocoding
 
     class Meta:
         ordering = ['-created_at']
