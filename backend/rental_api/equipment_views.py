@@ -149,14 +149,19 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                         "enum": ["available", "rented", "maintenance"],
                         "default": "available"
                     },
-                    "uploaded_images": {
+                    "thumbnail_image": {
+                        "type": "string",
+                        "format": "binary",
+                        "description": "Explicit file upload to use directly as the thumbnail image."
+                    },
+                    "additional_images": {
                         "type": "array",
                         "items": {
                             "type": "string",
                             "format": "binary"
                         },
                         "description": "Upload up to 3 images for this equipment."
-                    }
+                    },
                 },
             },
         },
@@ -272,7 +277,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary="Update Equipment (Partial)",
-        description="Updates field subsets or adds new images (up to 3 total) to a specific equipment item.",
+        description="Updates field subsets, deletes old photos, or adds new images (up to 3 total) to a specific equipment item.",
         tags=["Equipment Management"],
         request={
             "multipart/form-data": EquipmentDetailSerializer
@@ -283,7 +288,30 @@ class EquipmentViewSet(viewsets.ModelViewSet):
             ),
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(
                 response=ErrorResponseSerializer,
-                description="Bad Request. Invalid data modifications or exceeded image cap limits.",
+                description="Bad Request. Invalid data modifications, general limits, or file validation issues.",
+                examples=[
+                    OpenApiExample(
+                        name="Image File Errors Example",
+                        description="Fired when uploaded files fail validation specs (size, dimensions). Tracks indices via a dictionary mapping.",
+                        value={
+                            "uploaded_images": {
+                                "1": [
+                                    "File size too large. Max is 2MB. (Found 4.20MB)",
+                                    "Dimensions too small (200x200px). Minimum is 400x400px."
+                                ],
+                                "2": []
+                            }
+                        }
+                    ),
+                    OpenApiExample(
+                        name="Structural Rule Errors Example",
+                        description="Fired when general operational constraints fail (e.g. going below 1 active image, or going above 3 total).",
+                        value={
+                            "images": ["Cannot update. At least one image must remain attached to the equipment."],
+                            "uploaded_images": ["Limit exceeded. This action would result in 4 total images (Max: 3)."]
+                        }
+                    )
+                ]
             ),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(
                 response=ErrorResponseSerializer,
@@ -301,7 +329,13 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 status_codes=["200"],
                 value={
                     "detail": "Equipment successfully updated.",
-                    "data": {"id": 1, "title": "Modified Title Name"}
+                    "data": {
+                        "id": 1, 
+                        "title": "Modified Title Name",
+                        "images": [
+                            {"id": 15, "image": "/media/equipment/clean_pic.jpg"}
+                        ]
+                    }
                 }
             )
         ]

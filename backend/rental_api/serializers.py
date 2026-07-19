@@ -1,6 +1,16 @@
+from django.db import transaction
+from django.core.files.images import get_image_dimensions
+from django.contrib.auth.models import User
+from django.core.files.storage import default_storage
+from django.core.files.images import get_image_dimensions
 from rest_framework import serializers
 from core_db.models import Category, Equipment, EquipmentImage
-from django.contrib.auth.models import User
+from .utils import (
+    validate_image_dimensions_and_size, 
+    purge_physical_files, 
+    handle_equipment_update, 
+    handle_equipment_creation
+)
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -17,23 +27,40 @@ class EquipmentImageSerializer(serializers.ModelSerializer):
 
 class EquipmentDetailSerializer(serializers.ModelSerializer):
     images = EquipmentImageSerializer(many=True, read_only=True)
-    uploaded_images = serializers.ListField(
+
+    additional_images = serializers.ListField(
         child=serializers.ImageField(max_length=100000, allow_empty_file=False, use_url=False),
-        write_only=True,
-        required=False,
-        help_text="Upload up to 3 images for this equipment."
+        write_only=True, required=False, help_text="Upload up to 2 images for this equipment."
     )
+    images_to_delete = serializers.ListField(
+        child=serializers.IntegerField(), write_only=True, required=False
+    )
+    thumbnail_image = serializers.ImageField(
+        required=True, 
+        use_url=True,
+        error_messages={
+            'required': "This field is required and must be a valid image file.",
+            'invalid': "The submitted data was not a valid image file."
+        }
+    )
+    thumbnail_id = serializers.IntegerField(write_only=True, required=False)
 
     class Meta:
         model = Equipment
         fields = [
-            'id', 'owner', 'category', 'title', 
-            'description', 'purchase_price', 'daily_rent', 
-            'rent_advance', 'status', 'average_rating', 'total_rentals', 'slug','created_at', 'images',
-            'uploaded_images'
+            'id', 'owner', 'category', 'title', 'description', 'purchase_price', 
+            'daily_rent', 'rent_advance', 'status', 'average_rating', 'total_rentals', 
+            'slug', 'created_at', 'images', 'additional_images', 'images_to_delete', 
+            'thumbnail_image', 'thumbnail_id'
         ]
         read_only_fields = ['owner', 'average_rating', 'total_rentals', 'slug']
-
+    
+    def validate_additional_images(self, value):
+        if not value:
+            return value
+        print("-----------")
+        print(value)
+        return validate_image_dimensions_and_size(value)
 
     def validate(self, attrs):
         purchase_price = attrs.get('purchase_price', getattr(self.instance, 'purchase_price', None))
@@ -41,66 +68,78 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
         rent_advance = attrs.get('rent_advance', getattr(self.instance, 'rent_advance', None))
 
         errors = {}
-
         if purchase_price is not None and purchase_price < 0:
             errors['purchase_price'] = "Purchase price cannot be negative."
-            
         if daily_rent is not None and daily_rent < 0:
             errors['daily_rent'] = "Daily rent cannot be negative."
-            
         if rent_advance is not None and rent_advance < 0:
             errors['rent_advance'] = "Rent advance cannot be negative."
 
         if not errors:
-            if rent_advance is not None and purchase_price is not None:
-                if rent_advance > purchase_price:
-                    errors['rent_advance'] = "Rent advance cannot be greater than the purchase price."
-            
+            if rent_advance is not None and purchase_price is not None and rent_advance > purchase_price:
+                errors['rent_advance'] = "Rent advance cannot be greater than the purchase price."
             if daily_rent == 0 and rent_advance and rent_advance > 0:
                 errors['rent_advance'] = "You cannot charge a rent advance if the daily rent is free (0)."
 
         if errors:
             raise serializers.ValidationError(errors)
         
-
-        uploaded_images = attrs.get('uploaded_images', [])
-        new_images_count = len(uploaded_images)
+        # Pull arrays safely for boundary checks
+        additional_images = attrs.get('additional_images', [])
+        thumbnail_image = attrs.get('thumbnail_image', None)
         
-        # Scenario A: Creation (self.instance is None)
+        # -------------------------------------------------------------
+        # CREATION MATH RULES
+        # -------------------------------------------------------------
         if not self.instance:
-            if new_images_count == 0:
+            if not thumbnail_image:
+                raise serializers.ValidationError({'thumbnail_image': "You must upload a main thumbnail image."})
+            
+            # 2. Check maximum limits for additional uploads (Max 2 extra allowed)
+            if len(additional_images) > 2:
                 raise serializers.ValidationError({
-                    'uploaded_images': "You must upload at least one image when creating equipment."
+                    'additional_images': f"You can only upload a maximum of 2 additional gallery images. Attempted: {len(additional_images)}."
                 })
+                
+            return attrs
         
-        # Scenario B: Updating (self.instance exists)
-        existing_images_count = 0
-        if self.instance:
-            existing_images_count = self.instance.images.count()
-        
-        total_expected_images = existing_images_count + new_images_count
-        if total_expected_images > 3:
-            raise serializers.ValidationError({
-                'uploaded_images': f"You can upload a maximum of 3 images. Current: {existing_images_count}, Added: {new_images_count}."
-            })
-
         return attrs
-    
+        
+        # # Update Math Rules
+        # existing_images = self.instance.images.all()
+        # existing_ids = set(existing_images.values_list('id', flat=True))
+        
+        # invalid_ids = [img_id for img_id in images_to_delete if img_id not in existing_ids]
+        # if invalid_ids:
+        #     raise serializers.ValidationError({'images_to_delete': f"Image IDs {invalid_ids} do not belong to this equipment."})
+
+        # final_count = existing_images.count() - len(set(images_to_delete)) + len(additional_images) + (1 if thumbnail_image else 0)
+        # if final_count < 1:
+        #     raise serializers.ValidationError({'additional_images': "At least one image must remain attached."})
+        # if final_count > 3:
+        #     raise serializers.ValidationError({'additional_images': f"Limit exceeded. Results in {final_count} images (Max: 3)."})
+
+        # # Target ID & Index Checks
+        # t_id, t_idx = attrs.get('thumbnail_id'), attrs.get('thumbnail_index')
+        # if t_id is not None and (t_id in images_to_delete or t_id not in existing_ids):
+        #     raise serializers.ValidationError({'thumbnail_id': "Invalid or deleted thumbnail selection."})
+        # if t_idx is not None and (t_idx < 0 or t_idx >= len(additional_images)):
+        #     raise serializers.ValidationError({'thumbnail_index': "Index out of range for newly uploaded images."})
+
+        # return attrs
 
     def create(self, validated_data):
-        images_data = validated_data.pop('uploaded_images', [])
-        
-        equipment = Equipment.objects.create(**validated_data)
-        for image_data in images_data:
-            EquipmentImage.objects.create(equipment=equipment, image=image_data)
-        return equipment
+        return handle_equipment_creation(validated_data, Equipment, EquipmentImage)
 
     def update(self, instance, validated_data):
-        images_data = validated_data.pop('uploaded_images', [])
-        instance = super().update(instance, validated_data)
-        
-        for image_data in images_data:
-            EquipmentImage.objects.create(equipment=instance, image=image_data)
+        with transaction.atomic():
+            # Update root fields
+            instance = super().update(instance, validated_data)
+            # Run calculations inside the transaction
+            instance, files_to_wipe = handle_equipment_update(instance, validated_data, EquipmentImage)
+            
+        # Run storage cleaning strictly outside the database lock context
+        purge_physical_files(files_to_wipe)
         return instance
     
 
