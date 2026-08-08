@@ -53,12 +53,13 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'core_db',
     'auth_api',
-    'equipment_api',
+    'rental_api',
     'corsheaders',
     'rest_framework',
     'drf_spectacular',
     'phonenumber_field',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
 ]
 
 PHONENUMBER_DEFAULT_REGION = 'BD'
@@ -209,7 +210,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=10),
     "LEEWAY": timedelta(seconds=10),
     
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
