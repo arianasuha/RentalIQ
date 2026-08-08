@@ -206,8 +206,6 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         """
         self._check_weekly_creation_limit(request.user)
 
-        print("-------------------------------------------")
-        print(request.data)
         serializer = self.get_serializer(data=request.data)
 
         serializer.is_valid(raise_exception=True)
@@ -396,14 +394,21 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 {"error": "You are not authorized to delete this equipment."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        images_to_delete = [img.image for img in equipment_instance.images.all()]
+        images_to_delete = []
+
+        if equipment_instance.thumbnail_image and equipment_instance.thumbnail_image.name:
+            images_to_delete.append(equipment_instance.thumbnail_image.name)
+
+        for gallery_img in equipment_instance.images.all():
+            if gallery_img.image and gallery_img.image.name:
+                images_to_delete.append(gallery_img.image.name)
 
         response = super().destroy(request, *args, **kwargs)
 
         if response.status_code == status.HTTP_204_NO_CONTENT:
-            for file_obj in images_to_delete:
-                if file_obj and default_storage.exists(file_obj.name):
-                    default_storage.delete(file_obj.name)
+            for file_path in images_to_delete:
+                if default_storage.exists(file_path):
+                    default_storage.delete(file_path)
 
             return Response(
                 {"success": f"{title} deleted successfully."},
@@ -411,8 +416,6 @@ class EquipmentViewSet(viewsets.ModelViewSet):
             )
 
         return response
-    
-
 
 #pagination
 #throttling
