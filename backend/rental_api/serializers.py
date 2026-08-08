@@ -38,7 +38,7 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
         write_only=True, required=False, help_text="IDs of EquipmentImage instances to delete."
     )
     thumbnail_image = serializers.ImageField(
-        required=True, 
+        required=False, 
         use_url=True,
         error_messages={
             'required': "This field is required and must be a valid image file.",
@@ -53,7 +53,7 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
             'daily_rent', 'rent_advance', 'status', 'average_rating', 'total_rentals', 
             'slug', 'created_at', 'images', 'additional_images', 'thumbnail_image', 'delete_image_ids'
         ]
-        read_only_fields = ['owner', 'average_rating', 'total_rentals', 'slug']
+        read_only_fields = ['id', 'owner', 'average_rating', 'total_rentals', 'slug', 'created_at']
 
     def to_internal_value(self, data):
         """
@@ -63,6 +63,19 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
        
         if hasattr(data, '_mutable'):
             data = data.copy()
+
+        fields_to_clean = [
+            'category', 'title', 'description', 
+            'purchase_price', 'daily_rent', 'rent_advance', 
+            'status', 'thumbnail_image'
+        ]
+
+        for field in fields_to_clean:
+            if field in data and data.get(field) in ['', 'null', 'undefined', None]:
+                if hasattr(data, '_mutable'):
+                    data.pop(field, None)
+                else:
+                    data.pop(field, None)
 
         if 'additional_images' in data:
             if hasattr(data, 'getlist'):
@@ -88,7 +101,7 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
     def validate_thumbnail_image(self, value):
         if value:
             return validate_image_dimensions_and_size(value)
-        return value   # what are we returning
+        return value   
         
     def validate_additional_images(self, value):
         if not value:
@@ -96,7 +109,7 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
         
         return validate_image_dimensions_and_size(value)
 
-    def validate(self, attrs):    # which validation method will work first
+    def validate(self, attrs):   
         purchase_price = attrs.get('purchase_price', getattr(self.instance, 'purchase_price', None))
         daily_rent = attrs.get('daily_rent', getattr(self.instance, 'daily_rent', None))
         rent_advance = attrs.get('rent_advance', getattr(self.instance, 'rent_advance', None))
@@ -176,7 +189,7 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
 
         with transaction.atomic():
             if new_thumbnail and instance.thumbnail_image:
-                instance.thumbnail_image.delete(save=False) # Delete old file from storage
+                instance.thumbnail_image.delete(save=False)
 
             for attr, value in validated_data.items():
                 setattr(instance, attr, value)
@@ -199,7 +212,7 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
 
 class EquipmentListSerializer(serializers.ModelSerializer):
     category_name = serializers.ReadOnlyField(source='category.name')
-    thumbnail_image = serializers.SerializerMethodField()
+    thumbnail_image = serializers.ImageField(read_only=True)
 
     class Meta:
         model = Equipment
@@ -215,15 +228,6 @@ class EquipmentListSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_thumbnail_image(self, obj):
-        latest_image = obj.images.order_by('-uploaded_at').first()
-        
-        if latest_image:
-            request = self.context.get('request')
-            if request is not None:
-                return request.build_absolute_uri(latest_image.image.url)
-            return latest_image.image.url
-        return None
 
 class OwnerSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source='username') 
@@ -236,6 +240,7 @@ class EquipmentRetrieveSerializer(serializers.ModelSerializer):
     """Get Equipment by id serializer."""
     category = CategorySerializer(read_only=True)
     images = EquipmentImageSerializer(many=True, read_only=True)
+    thumbnail_image = serializers.ImageField(read_only=True)
 
     class Meta:
         model = Equipment
@@ -243,7 +248,7 @@ class EquipmentRetrieveSerializer(serializers.ModelSerializer):
             'id', 'owner', 'category', 'title', 
             'description', 'purchase_price', 'daily_rent', 
             'rent_advance', 'status', 'average_rating', 'total_rentals', 'slug','created_at',
-            'images'
+            'images', 'thumbnail_image'
         ]
 
         read_only_fields = fields

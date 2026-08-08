@@ -12,7 +12,7 @@ from .serializers import (
     EquipmentDetailSerializer, 
     EquipmentListSerializer, 
     EquipmentRetrieveSerializer,
-    EquipmentImageSerializer,
+    EquipmentDetailSerializer,
 )
 from .paginations import EquipmentPagination
 
@@ -135,6 +135,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         description="Allows authenticated users to register a new equipment item with up to 3 images.",
         tags=["Equipment Management"],
         request={
+            "application/json": EquipmentDetailSerializer,
             "multipart/form-data": {
                 "type": "object",
                 "properties": {
@@ -277,9 +278,37 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         summary="Update Equipment (Partial)",
         description="Updates field subsets, deletes old photos, or adds new images (up to 3 total) to a specific equipment item.",
         tags=["Equipment Management"],
-        request={
-            "multipart/form-data": EquipmentDetailSerializer
-        },
+        request={ "application/json": EquipmentDetailSerializer,
+                  "multipart/form-data": {
+                      "type": "object",
+                        "properties": {
+                            "category": {"type": "integer", "description": "ID of the category"},
+                            "title": {"type": "string", "maxLength": 255},
+                            "description": {"type": "string"},
+                            "purchase_price": {"type": "number", "format": "double"},
+                            "daily_rent": {"type": "number", "format": "double"},
+                            "rent_advance": {"type": "number", "format": "double"},
+                            "status": {
+                                "type": "string", 
+                                "enum": ["available", "rented", "maintenance"],
+                                "default": "available"
+                            },
+                            "thumbnail_image": {
+                                "type": "string",
+                                "format": "binary",
+                                "description": "Explicit file upload to use directly as the thumbnail image."
+                            },
+                            "additional_images": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "format": "binary"
+                                },
+                                "description": "Upload up to 3 images for this equipment."
+                            },
+                        },
+                    },
+                },
         responses={
             status.HTTP_200_OK: OpenApiResponse(
                 description="Equipment patched successfully.",
