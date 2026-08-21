@@ -19,6 +19,7 @@ from django.contrib.auth.models import (
 )
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.gis.db import models as gis_models
+from django.contrib.postgres.indexes import GinIndex
 from django.core.validators import RegexValidator, MinValueValidator, MaxValueValidator
 
 
@@ -140,16 +141,13 @@ class User(AbstractBaseUser, PermissionsMixin):
         stamp = int(timezone.now().timestamp())
         prefix = f"deleted_{stamp}_"
 
-        # Scramble Email
         max_email_len = 255 - len(prefix)
         self.email = f"{prefix}{self.email[:max_email_len]}"
         
-        # Scramble Username if present
         if self.username:
             max_orig_len = 150 - len(prefix)  
             self.username = f"{prefix}{self.username[:max_orig_len]}"
             
-        # Clear unique phone number constraint
         if self.phone_number:
             self.phone_number = None
 
@@ -220,10 +218,8 @@ class Equipment(models.Model):
     slug = models.SlugField(max_length=100, unique=True, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     
-    # Soft Delete Fields
     is_deleted = models.BooleanField(default=False, db_index=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
-    # GeoDjango Point field (Stores longitude and latitude as geometric coordinates)
     location = gis_models.PointField(srid=4326, null=True, blank=True, db_index=True)
     address_name = models.CharField(
         max_length=255, 
@@ -233,8 +229,8 @@ class Equipment(models.Model):
     )
 
     # Model Managers
-    objects = ActiveEquipmentManager()  # Equipment.objects.all() returns active items
-    all_objects = EquipmentManager()      # Equipment.all_objects.all() includes deleted items
+    objects = ActiveEquipmentManager()  
+    all_objects = EquipmentManager()      
 
     class Meta:
         ordering = ['-created_at']
@@ -244,6 +240,13 @@ class Equipment(models.Model):
                 'owner', 
                 name='unique_owner_equipment_title'
             )
+        ]
+        indexes = [
+            GinIndex(
+                fields=['address_name'], 
+                name='address_trgm_idx', 
+                opclasses=['gin_trgm_ops']
+            ),
         ]
 
     def save(self, *args, **kwargs):
@@ -261,7 +264,6 @@ class Equipment(models.Model):
 
     def delete(self, using=None, keep_parents=False): 
         """Prevents deletion if active rentals exist; soft-deletes otherwise."""
-        # Check through the related Rental model for ongoing fulfillment
         has_active = self.rental_requests.filter(
             Q(rental__status__in=['UPCOMING', 'ACTIVE', 'OVERDUE']) | Q(status='PENDING')
         ).exists()
@@ -280,8 +282,6 @@ class Equipment(models.Model):
         self.deleted_at = timezone.now()
         super().save(using=using)
 
-
-        # should i add the full clean logic? as terminal by passed thumbnail image constraint
 
 
 class EquipmentImage(models.Model):
@@ -419,14 +419,12 @@ class Rental(models.Model):
         FAILED = 'FAILED', 'Failed'
         REFUNDED = 'REFUNDED', 'Refunded'
 
-    # Single Source of Truth
     rental_request = models.OneToOneField(
         RentalRequest,
         on_delete=models.PROTECT,
         related_name='rental'
     )
 
-    # Operational Tracking (Fields specific ONLY to active fulfillment)
     actual_return_date = models.DateField(null=True, blank=True)
     deposit_returned = models.BooleanField(default=False)
 
@@ -456,87 +454,3 @@ class Rental(models.Model):
 
     def __str__(self):
         return f"Rental #{self.id} - {self.rental_request.equipment.title} ({self.status})"
-
-    
-# class Notification(models.Model):
-#     class NotificationType(models.TextChoices):
-#         # Rental Request Lifecycle
-#         REQUEST_RECEIVED = 'REQUEST_RECEIVED', 'New Rental Request Received'
-#         REQUEST_APPROVED = 'REQUEST_APPROVED', 'Rental Request Approved'
-#         REQUEST_REJECTED = 'REQUEST_REJECTED', 'Rental Request Rejected'
-#         REQUEST_CANCELLED = 'REQUEST_CANCELLED', 'Rental Request Cancelled'
-
-#         # Rental Operations & Payment
-#         PAYMENT_SUCCESS = 'PAYMENT_SUCCESS', 'Payment Received'
-#         RENTAL_ACTIVE = 'RENTAL_ACTIVE', 'Rental Period Started'
-#         RENTAL_OVERDUE = 'RENTAL_OVERDUE', 'Rental Overdue Warning'
-#         RENTAL_COMPLETED = 'RENTAL_COMPLETED', 'Rental Marked as Returned'
-
-#         # Account & General
-#         SYSTEM_ALERT = 'SYSTEM_ALERT', 'System Alert'
-
-#     recipient = models.ForeignKey(
-#         settings.AUTH_USER_MODEL,
-#         on_delete=models.CASCADE,
-#         related_name='notifications',
-#         db_index=True
-#     )
-#     actor = models.ForeignKey(
-#         settings.AUTH_USER_MODEL,
-#         on_delete=models.SET_NULL,
-#         null=True,
-#         blank=True,
-#         related_name='sent_notifications',
-#         help_text="The user who triggered the notification (e.g., renter, owner, or system if null)."
-#     )
-    
-#     notification_type = models.CharField(
-#         max_length=50,
-#         choices=NotificationType.choices,
-#         default=NotificationType.SYSTEM_ALERT,
-#         db_index=True
-#     )
-#     title = models.CharField(max_length=255)
-#     message = models.TextField()
-
-#     # Optional generic link or object references to support direct routing in frontend/API
-#     rental_request = models.ForeignKey(
-#         'RentalRequest',
-#         on_delete=models.SET_NULL,
-#         null=True,
-#         blank=True,
-#         related_name='notifications'
-#     )
-#     rental = models.ForeignKey(
-#         'Rental',
-#         on_delete=models.SET_NULL,
-#         null=True,
-#         blank=True,
-#         related_name='notifications'
-#     )
-#     equipment = models.ForeignKey(
-#         'Equipment',
-#         on_delete=models.SET_NULL,
-#         null=True,
-#         blank=True,
-#         related_name='notifications'
-#     )
-    
-#     # Tracking State
-#     is_read = models.BooleanField(default=False, db_index=True)
-#     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-
-#     class Meta:
-#         ordering = ['-created_at']
-#         indexes = [
-#             models.Index(fields=['recipient', 'is_read', 'created_at']),
-#         ]
-
-#     def __str__(self):
-#         return f"Notification for {self.recipient.email} - {self.notification_type} ({'Read' if self.is_read else 'Unread'})"
-
-#     def mark_as_read(self):
-#         """Helper method to mark single notification as read."""
-#         if not self.is_read:
-#             self.is_read = True
-#             self.save(update_fields=['is_read'])
