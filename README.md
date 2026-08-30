@@ -1,32 +1,73 @@
-# RentalIQ - Eqipment Rental Platform
+# RentalIQ - Equipment Rental Platform
 A robust, RESTful backend API for an equipment rental ecosystem built with Python, Django, and Django REST Framework (DRF). Designed with enterprise-grade security practices, concurrency management, and clean code architecture.
 
-## Key Highlights & Security Implementations
-### JWT Security & Mitigation Strategies
+## Key Highlights of Security Implementations
+Although engineered as a commercial rental service, RentIQ integrates defense-in-depth security principles across authentication, data integrity, and network traffic:
 
-Stateless Token Auth: Access & Refresh token rotation using djangorestframework-simplejwt.
+### Side-Channel Timing Attack Mitigation: 
+Implements constant-time dummy password hashing for non-existent user accounts during login to prevent account enumeration via timing variances.
 
-Token Blacklisting: Automated token invalidation upon user logout.
+### Brute-Force Protection & Account Lockouts: 
+Tracks failed login attempts in Redis per email address, enforcing an automated account lock (is_active = False) after 5 consecutive failures.
 
-Timing Attack Defense: Mitigated side-channel user enumeration timing attacks by running constant-time dummy password hashing routines when user lookups fail during authentication.
+### Strict JWT Lifecycle Management: 
+Short-lived access tokens paired with mandatory refresh token rotation (ROTATE_REFRESH_TOKENS = True) and immediate token blacklisting (rest_framework_simplejwt.token_blacklist) upon refresh or logout.
 
-### Concurrency & Race Condition Safety
+### Strict CORS Policy & Credential Scoping: 
+Configured with explicit origin whitelisting (CORS_ALLOWED_ORIGINS) and controlled credential handling (CORS_ALLOW_CREDENTIALS), preventing unauthorized cross-origin requests while restricting wildcard access (CORS_ALLOW_ALL_ORIGINS = False).
 
-Pessimistic Locking / Atomic Transactions: Handles high-concurrency booking requests using select_for_update() within atomic database blocks to prevent double-booking race conditions.
+### Custom Password Complexity Validation: 
+Enforces custom password strength policies (PasswordComplexityValidator) combined with standard Django attribute similarity and numeric checks.
 
-### Data Integrity & Clean Storage Management
+### Soft Deletion for Data Security: 
+Implements soft deletion for users, equipment listings, and rental records to prevent irreversible data loss, support forensic audit trails, and maintain relational integrity without exposing deleted entities to standard API queries.
 
-Soft Deletion Mechanism: Implemented custom soft-delete queries and model managers for both User and Equipment entities to preserve relational history and audit trails.
-
-Ghost Image Resolution: Automated cleanup hooks and signals for media files to purge orphaned/stale image files from disk during soft deletion or image replacement.
+### Immutable Method Enforcement & Access Control: 
+Explicitly disables global HTTP PUT requests to prevent full entity overwrites, enforcing object-level ownership checks (instance.owner == request.user) for updates and deletions.
 
 ### Role-Based Access Control (RBAC)
 
 Strict permission classes controlling administrative actions—restricting Category CRUD operations exclusively to superusers/admins.
 
-### Tech Stack
+## Key Features
+
+### Geospatial & Proximity Search:
+
+PostGIS PointField (SRID 4326) geometry indexing for spatial queries.
+
+Radius-based filtering using Distance annotations (lat, lng, radius_km).
+
+Address-based proximity search paired with Trigram similarity (pg_trgm) for location autocomplete suggestions.
+
+### Interactive Leaflet.js Frontend Map:
+
+Browser Geolocation API integration with fallback to regional center search.
+
+Real-time debounced location search with auto-complete dropdowns.
+
+Dynamic marker rendering displaying daily rates, exact addresses, and distance to search location.
+
+### Rental Request & Concurrency Engine:
+
+Pessimistic database locking during approvals to eliminate double-booking race conditions.
+
+Automatic rejection of overlapping pending requests upon approval of a booking.
+
+Rate limiting restricting users to a maximum of 5 concurrent pending requests.
+
+### Inventory & Media Handling:
+
+Equipment listing management capped at 4 items per week per user to prevent inventory spamming.
+
+Automated storage cleanup removing thumbnail and gallery media files from storage upon listing deletion.
+
+## Tech Stack
 Framework: Django, Django REST Framework (DRF)
 
-Authentication: djangorestframework-simplejwt (JWT Rotation & Blacklist)
+Database & Spatial Engine: PostgreSQL, PostGIS (django.contrib.gis)
 
-Database: PostgreSQL
+Caching & Session Storage: Redis (django-redis)
+
+Authentication & Docs: rest_framework_simplejwt, drf-spectacular (OpenAPI 3.0)
+
+Frontend Interface (For map only): Leaflet.js (OpenStreetMap tiles), Vanilla JavaScript (ES6+), HTML5/CSS3
