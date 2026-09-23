@@ -228,7 +228,6 @@ class Equipment(models.Model):
         help_text="Human-readable address e.g. Banani, Dhaka"
     )
 
-    # Model Managers
     objects = ActiveEquipmentManager()  
     all_objects = EquipmentManager()      
 
@@ -454,3 +453,128 @@ class Rental(models.Model):
 
     def __str__(self):
         return f"Rental #{self.id} - {self.rental_request.equipment.title} ({self.status})"
+
+
+
+class RentalWallet(models.Model):
+    """
+    Tracks user balances and held escrow deposits.
+    Utilizes DecimalField for exact monetary precision.
+    """
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name='wallet'
+    )
+    balance = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    held_deposit = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Wallet ({self.user.email}) - Avail: ৳{self.balance} | Held: ৳{self.held_deposit}"
+
+
+class EscrowTransaction(models.Model):
+    """
+    Financial ledger tracking escrow deposits, releases, and late fee penalties.
+    """
+    class TransactionType(models.TextChoices):
+        HOLD = 'HOLD', 'Escrow Hold'
+        RELEASE = 'RELEASE', 'Escrow Release to Owner'
+        PENALTY = 'PENALTY', 'Late Return Penalty Deduction'
+        REFUND = 'REFUND', 'Deposit Refund to Renter'
+
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', 'Pending'
+        COMPLETED = 'COMPLETED', 'Completed'
+        FAILED = 'FAILED', 'Failed'
+
+    rental = models.ForeignKey(
+        'Rental', 
+        on_delete=models.CASCADE, 
+        related_name='escrow_transactions'
+    )
+    transaction_type = models.CharField(
+        max_length=20, 
+        choices=TransactionType.choices,
+        db_index=True
+    )
+    amount = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))]
+    )
+    status = models.CharField(
+        max_length=20, 
+        choices=Status.choices, 
+        default=Status.PENDING,
+        db_index=True
+    )
+    idempotency_key = models.CharField(
+        max_length=255, 
+        unique=True, 
+        null=True, 
+        blank=True,
+        db_index=True,
+        help_text="Guarantees single transaction execution under network retries."
+    )
+    note = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['rental', 'transaction_type']),
+        ]
+
+    def __str__(self):
+        return f"Escrow {self.transaction_type} #{self.id} - ৳{self.amount} ({self.status})"
+
+
+class ExtensionRequest(models.Model):
+    """
+    Allows renters to request extended return deadlines.
+    When approved by the owner, updates the rental return deadline and prevents Celery late penalties.
+    """
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', 'Pending Approval'
+        APPROVED = 'APPROVED', 'Approved'
+        REJECTED = 'REJECTED', 'Rejected'
+
+    rental = models.ForeignKey(
+        'Rental', 
+        on_delete=models.CASCADE, 
+        related_name='extension_requests'
+    )
+    proposed_end_date = models.DateField(
+        help_text="The requested new return date."
+    )
+    reason = models.TextField(
+        blank=True, 
+        null=True, 
+        help_text="Reason for delay (e.g., traffic, mutual agreement)."
+    )
+    status = models.CharField(
+        max_length=20, 
+        choices=Status.choices, 
+        default=Status.PENDING,
+        db_index=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Extension #{self.id} for Rental #{self.rental.id} - Status: {self.status}"
