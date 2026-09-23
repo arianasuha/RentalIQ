@@ -58,9 +58,19 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
             'id', 'owner', 'category', 'title', 'description', 'purchase_price', 
             'daily_rent', 'rent_advance', 'status', 'average_rating', 'total_rentals', 
             'slug', 'created_at', 'images', 'additional_images', 'thumbnail_image', 'delete_image_ids',
-            'city', 'area', 'block_sector', 'road_street', 'address_name', 'location'
+            'city', 'area', 'block_sector', 'road_street', 'address_name'
         ]
         read_only_fields = ['id', 'owner', 'average_rating', 'total_rentals', 'slug', 'created_at']
+
+    def get_location(self, obj) -> dict | None:
+        # Here, 'obj.location' reads the actual database field from PostGIS!
+        if obj.location:
+            return {
+                "lat": round(obj.location.y, 6), # Reads .y from DB point
+                "lng": round(obj.location.x, 6)  # Reads .x from DB point
+            }
+        return None
+
 
     def to_internal_value(self, data):
         """
@@ -72,7 +82,7 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
             data = data.copy()
 
         fields_to_clean = [
-            'category', 'title', 'description', 
+            'title', 'description', 
             'purchase_price', 'daily_rent', 'rent_advance', 
             'status', 'thumbnail_image', 'city_area', 'block_sector', 'road_street', 'address_name'
         ]
@@ -104,6 +114,7 @@ class EquipmentDetailSerializer(serializers.ModelSerializer):
                 data['additional_images'] = cleaned_files
 
         return super().to_internal_value(data)
+
 
     def validate_thumbnail_image(self, value):
         if value:
@@ -266,10 +277,17 @@ class EquipmentListSerializer(serializers.ModelSerializer):
             'status', 
             'average_rating', 
             'thumbnail_image',
+            'address_name',
             'slug'
         ]
         read_only_fields = fields
 
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if rep.get('address_name') is None:
+            rep.pop('address_name', None)
+        return rep
 
 class OwnerSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source='username') 
@@ -283,11 +301,7 @@ class EquipmentRetrieveSerializer(serializers.ModelSerializer):
     category = CategorySerializer(read_only=True)
     images = EquipmentImageSerializer(many=True, read_only=True)
     thumbnail_image = serializers.ImageField(read_only=True)
-
-    city = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    area = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    block_sector = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    road_street = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    location = serializers.SerializerMethodField()
 
     class Meta:
         model = Equipment
@@ -295,7 +309,7 @@ class EquipmentRetrieveSerializer(serializers.ModelSerializer):
             'id', 'owner', 'category', 'title', 
             'description', 'purchase_price', 'daily_rent', 
             'rent_advance', 'status', 'average_rating', 'total_rentals', 'slug','created_at',
-            'images', 'thumbnail_image', 'city', 'area', 'block_sector', 'road_street', 'address_name', 'location'
+            'images', 'thumbnail_image', 'address_name', 'location'
         ]
 
         read_only_fields = fields
@@ -311,11 +325,14 @@ class EquipmentRetrieveSerializer(serializers.ModelSerializer):
         return None
 
     def to_representation(self, instance):
-        """Dynamically strip the slug from the category field on retrieve"""
+        """Dynamically strip the None values on retrieve"""
         representation = super().to_representation(instance)
         
         if representation.get('category'):
             representation['category'].pop('slug', None)
+
+        if representation.get('address_name') is None:
+            representation.pop('address_name', None)
             
         return representation
 
@@ -400,7 +417,6 @@ class RentalRequestCreateSerializer(serializers.ModelSerializer):
         if equipment and renter and equipment.owner == renter:
             raise serializers.ValidationError({"equipment": "You cannot request to rent your own equipment."})
 
-        # 2. Date checks
         today = timezone.now().date()
         if start_date and start_date < today:
             raise serializers.ValidationError({"start_date": "Start date cannot be in the past."})
@@ -408,7 +424,6 @@ class RentalRequestCreateSerializer(serializers.ModelSerializer):
         if start_date and end_date and end_date < start_date:
             raise serializers.ValidationError({"end_date": "End date cannot be earlier than start date."})
 
-        # 3. Check model-level double-booking / validation rules
         instance = RentalRequest(
             equipment=equipment,
             renter=renter,
@@ -424,7 +439,6 @@ class RentalRequestCreateSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        # Automatically bind logged in user as renter
         validated_data['renter'] = self.context['request'].user
         return super().create(validated_data)
 

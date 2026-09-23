@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/3.2/ref/settings/
 import environ
 from pathlib import Path
 from datetime import timedelta
+from drf_spectacular.types import OpenApiTypes
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -186,12 +187,25 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'Handling login, logout, and token workflows.',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
-    
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+    },
+    'POSTPROCESSING_HOOKS': [
+        'drf_spectacular.hooks.postprocess_schema_enums'
+    ],
+    'TYPE_MAPPING': {
+        'django.contrib.gis.db.models.fields.PointField': OpenApiTypes.OBJECT,
+    },
     'SECURITY': [
         {
             'jwtAuth': [],
         }
     ],
+    'ENUM_NAME_OVERRIDES': {
+        'EquipmentStatusEnum': 'core_db.models.Equipment.STATUS_CHOICES',
+        'RentalRequestStatusEnum': 'core_db.models.RentalRequest.RequestStatus',
+        'RentalStatusEnum': 'core_db.models.Rental.RentalStatus',
+    },
 }
 
 CORS_ALLOW_ALL_ORIGINS = False

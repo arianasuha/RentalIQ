@@ -1,4 +1,3 @@
-# app/management/commands/purge_deleted_data.py
 from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -11,7 +10,7 @@ class Command(BaseCommand):
         # Retention threshold: 90 days
         cutoff = timezone.now() - timedelta(days=90)
 
-        # 1. Purge Equipment soft-deleted over 90 days ago
+        # Purge Equipment soft-deleted over 90 days ago
         deleted_equipment = Equipment.all_objects.filter(
             is_deleted=True, 
             deleted_at__lt=cutoff

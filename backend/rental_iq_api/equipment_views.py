@@ -10,7 +10,7 @@ from django.contrib.postgres.search import TrigramSimilarity
 from django.contrib.gis.measure import D
 from django.core.files.storage import default_storage
 from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse, OpenApiParameter
-from core_db.models import Equipment
+from core_db.models import Equipment, Category
 from backend.schema_serializers import ErrorResponseSerializer
 from backend.utils import block_put_method
 from .serializers import (
@@ -84,12 +84,12 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         """
         equipment_title = validated_data.get('title')
         
-        # case-insensitive check on 'title' for this specific 'owner'
         if Equipment.objects.filter(owner=user, title__iexact=equipment_title).exists():
             raise ValidationError(
                 {"title": ["You have already listed an item with this title."]}
             )
 
+        
     @extend_schema(
         summary="List All Equipment",
         description="Retrieves a list of all existing equipment items. Accessible by anyone.",
@@ -146,7 +146,10 @@ class EquipmentViewSet(viewsets.ModelViewSet):
             "multipart/form-data": {
                 "type": "object",
                 "properties": {
-                    "category": {"type": "integer", "description": "ID of the category"},
+                    "category": {
+                        "type": "integer",
+                        "description": "Select a valid Category"
+                    },
                     "title": {"type": "string", "maxLength": 255},
                     "description": {"type": "string"},
                     "purchase_price": {"type": "number", "format": "double"},
