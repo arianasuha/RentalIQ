@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RentalIQ - Spatial Equipment Search</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6f8; }
+        .controls { margin-bottom: 15px; display: flex; gap: 10px; align-items: flex-start; }
+        
+        .search-wrapper { position: relative; width: 300px; }
+        
+        input, button { padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        input[type="text"] { width: 100%; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; height: 38px; }
+        button:hover { background: #0056b3; }
+        
+        .suggestions-list {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: #ffffff;
+            border: 1px solid #ccc;
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: none;
+        }
+        .suggestions-list li {
+            padding: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #333;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .suggestions-list li:last-child {
+            border-bottom: none;
+        }
+        .suggestions-list li:hover {
+            background-color: #f0f4f8;
+            color: #007bff;
+        }
+
+        #map { height: 650px; width: 100%; border-radius: 8px; }
+    </style>
+</head>
+<body>
+
+    <h2>Nearby Rental Equipment</h2>
+    <div class="controls">
+        <div class="search-wrapper">
+            <input type="text" id="addressInput" placeholder="Enter location (e.g. Banani, Dhaka)" autocomplete="off">
+            <ul id="suggestionsList" class="suggestions-list"></ul>
+        </div>
+        <input type="number" id="radiusInput" placeholder="Radius (km)" value="3" style="width: 120px;">
+        <button onclick="searchNearby()">Search Map</button>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+    const bangladeshBounds = L.latLngBounds(
+        L.latLng(20.0, 88.0),
+        L.latLng(27.5, 93.0)
+    );
+
+    const map = L.map('map', {
+        maxBounds: bangladeshBounds,
+        maxBoundsViscosity: 0.5,
+        minZoom: 6,
+        maxZoom: 18
+    }).setView([23.8103, 90.4125], 12);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let markersLayer = L.layerGroup().addTo(map);
+
+    async function fetchNearbyByUrl(url) {
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+
+            markersLayer.clearLayers();
+            const bounds = L.latLngBounds();
+
+            if (data.results && data.results.length > 0) {
+                data.results.forEach(item => {
+                    if (item.location) {
+                        let lat, lng;
+
+                        if (Array.isArray(item.location.coordinates)) {
+                            lng = item.location.coordinates[0];
+                            lat = item.location.coordinates[1];
+                        } else if (item.location.lat !== undefined && item.location.lng !== undefined) {
+                            lat = item.location.lat;
+                            lng = item.location.lng;
+                        }
+
+                        if (lat !== undefined && lng !== undefined) {
+                            const markerLatLng = [lat, lng];
+                            const marker = L.marker(markerLatLng);
+                            
+                            const distanceText = item.distance_km !== undefined 
+                                ? `${Number(item.distance_km).toFixed(2)} km` 
+                                : 'N/A';
+
+                            marker.bindPopup(`
+                                <b>${item.title}</b><br>
+                                Rent: $${item.daily_rent}/day<br>
+                                Address: ${item.address_name || 'N/A'}<br>
+                                Distance: <b>${distanceText}</b>
+                            `);
+                            
+                            markersLayer.addLayer(marker);
+                            bounds.extend(markerLatLng);
+                        }
+                    }
+                });
+            }
+
+            map.invalidateSize();
+
+            if (data.results && data.results.length > 0 && bounds.isValid()) {
+                map.fitBounds(bounds, { 
+                    paddingTopLeft: [50, 80],
+                    paddingBottomRight: [50, 50],
+                    maxZoom: 15 
+                });
+            } else if (data.search_coordinates) {
+                map.setView([data.search_coordinates.lat, data.search_coordinates.lng], 14);
+            }
+        } catch (err) {
+            console.error("Failed to fetch equipment:", err);
+        }
+    }
+
+    function searchNearby() {
+        const addressInput = document.getElementById('addressInput').value;
+        const address = addressInput ? addressInput.trim() : "";
+        
+        const radius = document.getElementById('radiusInput').value || 3;
+
+        if (!address) {
+            const center = map.getCenter();
+            const fallbackUrl = `http://127.0.0.1:8000/rental-iq-api/equipment/nearby/?lat=${center.lat}&lng=${center.lng}&radius_km=${radius}`;
+            fetchNearbyByUrl(fallbackUrl);
+            return;
+        }
+
+        const url = `http://127.0.0.1:8000/rental-iq-api/equipment/nearby/?address=${encodeURIComponent(address)}&radius_km=${radius}`;
+        fetchNearbyByUrl(url);
+    }
+
+    const addressInputElement = document.getElementById('addressInput');
+    const suggestionsListElement = document.getElementById('suggestionsList');
+    let debounceTimer;
+
+    addressInputElement.addEventListener('input', function() {
+        const query = this.value.trim();
+
+        clearTimeout(debounceTimer);
+
+        if (query.length < 2) {
+            suggestionsListElement.innerHTML = '';
+            suggestionsListElement.style.display = 'none';
+            return;
+        }
+
+        debounceTimer = setTimeout(async () => {
+            try {
+                const response = await fetch(`http://127.0.0.1:8000/rental-iq-api/equipment/locations/suggest/?q=${encodeURIComponent(query)}`);
+                const suggestions = await response.json();
+
+                suggestionsListElement.innerHTML = '';
+
+                if (!Array.isArray(suggestions) || suggestions.length === 0) {
+                    suggestionsListElement.style.display = 'none';
+                    return;
+                }
+
+                suggestions.forEach(address => {
+                    const li = document.createElement('li');
+                    li.textContent = address;
+
+                    li.addEventListener('click', () => {
+                        addressInputElement.value = address;
+                        suggestionsListElement.style.display = 'none';
+                        searchNearby();
+                    });
+
+                    suggestionsListElement.appendChild(li);
+                });
+
+                suggestionsListElement.style.display = 'block';
+            } catch (error) {
+                console.error("Error fetching location suggestions:", error);
+            }
+        }, 300);
+    });
+
+    document.addEventListener('click', function(e) {
+        if (e.target !== addressInputElement && e.target !== suggestionsListElement) {
+            suggestionsListElement.style.display = 'none';
+        }
+    });
+
+
+    function initLocationDetection() {
+        const radius = document.getElementById('radiusInput').value || 3;
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+
+                    document.getElementById('addressInput').value = "";
+
+                    const gpsUrl = `http://127.0.0.1:8000/rental-iq-api/equipment/nearby/?lat=${lat}&lng=${lng}&radius_km=${radius}`;
+                    fetchNearbyByUrl(gpsUrl);
+                },
+                (error) => {
+                    console.warn("Geolocation blocked/unavailable. Loading default area search.");
+                    searchNearby();
+                },
+                { timeout: 5000 }
+            );
+        } else {
+            searchNearby();
+        }
+    }
+
+    initLocationDetection();
+</script>
+</body>
+</html>

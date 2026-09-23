@@ -3,17 +3,24 @@ from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.decorators import action
+from django.contrib.gis.geos import Point
+from django.contrib.gis.db.models.functions import Distance
+from django.contrib.postgres.search import TrigramSimilarity
+from django.contrib.gis.measure import D
 from django.core.files.storage import default_storage
-from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
-from core_db.models import Equipment
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse, OpenApiParameter
+from core_db.models import Equipment, Category
 from backend.schema_serializers import ErrorResponseSerializer
 from backend.utils import block_put_method
 from .serializers import (
     EquipmentDetailSerializer, 
     EquipmentListSerializer, 
     EquipmentRetrieveSerializer,
-    EquipmentImageSerializer,
+    EquipmentDetailSerializer,
+    EquipmentNearbySerializer
 )
+from .utils import get_coordinates_from_address
 from .paginations import EquipmentPagination
 
 
@@ -32,7 +39,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         Dynamically applies permissions based on the incoming action.
         """
 
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve', 'nearby', 'suggest_locations']:
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
     
@@ -77,12 +84,12 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         """
         equipment_title = validated_data.get('title')
         
-        # case-insensitive check on 'title' for this specific 'owner'
         if Equipment.objects.filter(owner=user, title__iexact=equipment_title).exists():
             raise ValidationError(
                 {"title": ["You have already listed an item with this title."]}
             )
 
+        
     @extend_schema(
         summary="List All Equipment",
         description="Retrieves a list of all existing equipment items. Accessible by anyone.",
@@ -132,13 +139,17 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary="Create New Equipment",
-        description="Allows authenticated users to register a new equipment item with up to 3 images.",
+        description="Allows authenticated users to register a new equipment item with optional address parameters.",
         tags=["Equipment Management"],
         request={
+            "application/json": EquipmentDetailSerializer,
             "multipart/form-data": {
                 "type": "object",
                 "properties": {
-                    "category": {"type": "integer", "description": "ID of the category"},
+                    "category": {
+                        "type": "integer",
+                        "description": "Select a valid Category"
+                    },
                     "title": {"type": "string", "maxLength": 255},
                     "description": {"type": "string"},
                     "purchase_price": {"type": "number", "format": "double"},
@@ -148,6 +159,22 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                         "type": "string", 
                         "enum": ["available", "rented", "maintenance"],
                         "default": "available"
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "Optional: City (e.g., Dhaka). Required if area or block or road is provided."
+                    },
+                    "area": {
+                        "type": "string",
+                        "description": "Optional: Area (e.g., Banani). Required if city or block or road is provided."
+                    },
+                    "block_sector": {
+                        "type": "string",
+                        "description": "Optional: Block or Sector (e.g., Block C). Required if area or city or road is provided."
+                    },
+                    "road_street": {
+                        "type": "string",
+                        "description": "Optional: Road or Street (e.g., Road 11). Required if area or city or block is provided."
                     },
                     "thumbnail_image": {
                         "type": "string",
@@ -160,7 +187,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                             "type": "string",
                             "format": "binary"
                         },
-                        "description": "Upload up to 3 images for this equipment."
+                        "description": "Upload up to 2 gallery images for this equipment."
                     },
                 },
             },
@@ -187,10 +214,14 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 }
             ),
             OpenApiExample(
-                name="Validation Error (Too many images)",
+                name="Incomplete Location Error",
                 response_only=True,
                 status_codes=["400"],
-                value={"uploaded_images": ["You can upload a maximum of 3 images per equipment."]}
+                value={
+                    "area": ["Area is required when specifying detailed location."],
+                    "block_sector": ["Block/Sector is required when specifying detailed location."],
+                    "road_street": ["Road/Street number is required when specifying detailed location."]
+                }
             ),
             OpenApiExample(
                 name="Weekly Limit Reached Cap",
@@ -275,10 +306,60 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary="Update Equipment (Partial)",
-        description="Updates field subsets, deletes old photos, or adds new images (up to 3 total) to a specific equipment item.",
+        description="Updates field subsets, location specifics, or attached gallery images for an equipment item.",
         tags=["Equipment Management"],
         request={
-            "multipart/form-data": EquipmentDetailSerializer
+            "application/json": EquipmentDetailSerializer,
+            "multipart/form-data": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "integer", "description": "ID of the category"},
+                    "title": {"type": "string", "maxLength": 255},
+                    "description": {"type": "string"},
+                    "purchase_price": {"type": "number", "format": "double"},
+                    "daily_rent": {"type": "number", "format": "double"},
+                    "rent_advance": {"type": "number", "format": "double"},
+                    "status": {
+                        "type": "string", 
+                        "enum": ["available", "rented", "maintenance"],
+                        "default": "available"
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "Optional: City. Must be accompanied by area and block and road."
+                    },
+                    "area": {
+                        "type": "string",
+                        "description": "Optional: Area. Must be accompanied by city and block and road."
+                    },
+                    "block_sector": {
+                        "type": "string",
+                        "description": "Optional: Block or Sector. Must be accompanied by area and city and road."
+                    },
+                    "road_street": {
+                        "type": "string",
+                        "description": "Optional: Road or Street. Must be accompanied by area and city and block."
+                    },
+                    "thumbnail_image": {
+                        "type": "string",
+                        "format": "binary",
+                        "description": "Explicit file upload to replace current thumbnail image."
+                    },
+                    "delete_image_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "IDs of EquipmentImage instances to delete."
+                    },
+                    "additional_images": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "binary"
+                        },
+                        "description": "Upload up to 2 additional gallery images."
+                    },
+                },
+            },
         },
         responses={
             status.HTTP_200_OK: OpenApiResponse(
@@ -286,30 +367,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
             ),
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(
                 response=ErrorResponseSerializer,
-                description="Bad Request. Invalid data modifications, general limits, or file validation issues.",
-                examples=[
-                    OpenApiExample(
-                        name="Image File Errors Example",
-                        description="Fired when uploaded files fail validation specs (size, dimensions). Tracks indices via a dictionary mapping.",
-                        value={
-                            "uploaded_images": {
-                                "1": [
-                                    "File size too large. Max is 2MB. (Found 4.20MB)",
-                                    "Dimensions too small (200x200px). Minimum is 400x400px."
-                                ],
-                                "2": []
-                            }
-                        }
-                    ),
-                    OpenApiExample(
-                        name="Structural Rule Errors Example",
-                        description="Fired when general operational constraints fail (e.g. going below 1 active image, or going above 3 total).",
-                        value={
-                            "images": ["Cannot update. At least one image must remain attached to the equipment."],
-                            "uploaded_images": ["Limit exceeded. This action would result in 4 total images (Max: 3)."]
-                        }
-                    )
-                ]
+                description="Bad Request. Invalid data modifications, location combinations, or image issues.",
             ),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(
                 response=ErrorResponseSerializer,
@@ -330,6 +388,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                     "data": {
                         "id": 1, 
                         "title": "Modified Title Name",
+                        "address_name": "Road 11, Block C, Banani, Dhaka, Bangladesh",
                         "images": [
                             {"id": 15, "image": "/media/equipment/clean_pic.jpg"}
                         ]
@@ -417,6 +476,120 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 
         return response
 
+
+    @extend_schema(
+        summary="Suggest Equipment Locations",
+        description="Returns distinct matching location strings based on trigram similarity for live search bar autocomplete.",
+        tags=["Equipment Management"],
+        parameters=[
+            OpenApiParameter(
+                name="q",
+                type=str,
+                description="Partial text input to match against equipment address names (e.g., 'bash')",
+                required=True,
+            )
+        ],
+        responses={
+            status.HTTP_200_OK: OpenApiResponse(
+                description="List of matching address suggestions.",
+            )
+        }
+    )
+    @action(detail=False, methods=['get'], url_path='locations/suggest')
+    def suggest_locations(self, request):
+        """
+        Returns up to 5 matching address names from existing Equipment listings
+        using PostgreSQL Trigram Similarity.
+        """
+        query = request.query_params.get('q', '').strip()
+        
+        if not query or len(query) < 2:
+            return Response([], status=status.HTTP_200_OK)
+
+        suggestions = (
+            Equipment.objects
+            .filter(address_name__isnull=False)
+            .annotate(similarity=TrigramSimilarity('address_name', query))
+            .filter(similarity__gt=0.1)
+            .order_by('-similarity')
+            .values_list('address_name', flat=True)
+            .distinct()[:5]
+        )
+
+        return Response(list(suggestions), status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='nearby')
+    def nearby(self, request):
+        lat = request.query_params.get('lat')
+        lng = request.query_params.get('lng')
+        address = request.query_params.get('address')
+        
+        try:
+            radius_km = float(request.query_params.get('radius_km', 10))
+        except ValueError:
+            return Response({"detail": "Invalid radius_km parameter."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if lat and lng:
+            try:
+                search_point = Point(float(lng), float(lat), srid=4326)
+            except ValueError:
+                return Response({"detail": "Invalid lat or lng values."}, status=status.HTTP_400_BAD_REQUEST)
+
+            nearby_equipment = (
+                Equipment.objects
+                .filter(
+                    status='available',
+                    location__distance_lte=(search_point, D(km=radius_km))
+                )
+                .annotate(distance_km=Distance('location', search_point))
+                .order_by('distance_km')
+            )
+
+        elif address:
+            search_point = get_coordinates_from_address(address)
+
+            if search_point:
+                nearby_equipment = (
+                    Equipment.objects
+                    .filter(
+                        status='available',
+                        location__distance_lte=(search_point, D(km=radius_km))
+                    )
+                    .annotate(distance_km=Distance('location', search_point))
+                    .order_by('distance_km')
+                )
+            else:
+                nearby_equipment = (
+                    Equipment.objects
+                    .filter(status='available', address_name__isnull=False)
+                    .annotate(similarity=TrigramSimilarity('address_name', address))
+                    .filter(similarity__gt=0.1)
+                    .order_by('-similarity')
+                )
+
+        else:
+            return Response(
+                {"detail": "Provide either ('lat' and 'lng') or an 'address' query parameter."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = EquipmentNearbySerializer(nearby_equipment, many=True)
+        
+        response_data = {
+            "count": nearby_equipment.count(),
+            "radius_km": radius_km,
+            "results": serializer.data
+        }
+
+        if search_point:
+            response_data["search_coordinates"] = {
+                "lat": round(search_point.y, 6),
+                "lng": round(search_point.x, 6)
+            }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+    
+# will work on:
 #pagination
 #throttling
 #owner's name should be present in retrieve rather than id 

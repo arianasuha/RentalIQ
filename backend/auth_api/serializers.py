@@ -55,9 +55,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
             
         username = attrs.get("username")
         if username:
-            if len(username) < 6:
+            if len(username) < 3:
                 raise serializers.ValidationError(
-                    {"username": "Username must be at least 6 characters long."}
+                    {"username": "Username must be at least 3 characters long."}
                 )
 
         attrs = super().validate(attrs)

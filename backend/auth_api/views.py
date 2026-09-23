@@ -152,19 +152,30 @@ class RefreshTokenView(APIView):
         request=RefreshRequestSerializer,
         responses={
             200: RefreshResponseSerializer,
-            400: OpenApiExample(
-                "Bad Request",
-                value={"detail": "Invalid Token."}
+            400: OpenApiResponse(description="Invalid Token."),
+            401: OpenApiResponse(description="Token is invalid or expired."),
+            403: OpenApiResponse(description="This account is deactivated."),
+        },
+        examples=[
+            OpenApiExample(
+                "Bad Request Example",
+                status_codes=["400"],
+                value={"detail": "Invalid Token."},
+                response_only=True,
             ),
-            401: OpenApiExample(
-                "Unauthorized",
-                value={"detail": "Token is invalid or expired."}
+            OpenApiExample(
+                "Unauthorized Example",
+                status_codes=["401"],
+                value={"detail": "Token is invalid or expired."},
+                response_only=True,
             ),
-            403: OpenApiExample(
-                "Forbidden",
-                value={"detail": "This account is deactivated."}
+            OpenApiExample(
+                "Forbidden Example",
+                status_codes=["403"],
+                value={"detail": "This account is deactivated."},
+                response_only=True,
             ),
-        }
+        ]
     )
     def post(self, request, *args, **kwargs):
         request_serializer = RefreshRequestSerializer(data=request.data)

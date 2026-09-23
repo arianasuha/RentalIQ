@@ -1,7 +1,14 @@
+import logging
 from django.db import transaction
 from django.core.files.storage import default_storage
 from django.core.files.images import get_image_dimensions
 from rest_framework import serializers
+from django.core.cache import cache
+from django.contrib.gis.geos import Point
+from geopy.geocoders import Nominatim
+from redis.exceptions import ConnectionError as RedisConnectionError
+from django_redis.exceptions import ConnectionInterrupted
+
 
 
 def validate_image_dimensions_and_size(value):
@@ -54,3 +61,49 @@ def validate_image_dimensions_and_size(value):
         raise serializers.ValidationError(errors)
 
     return value
+
+
+# redis-cached geocoding helper
+
+logger = logging.getLogger(__name__)
+
+def get_coordinates_from_address(address_text: str) -> Point | None:
+    """
+    Checks Redis cache before querying OpenStreetMap Nominatim.
+    Appends Bangladesh context and limits search bounds to Bangladesh.
+    Returns GeoDjango Point(longitude, latitude) object.
+    """
+    if not address_text or not address_text.strip():
+        return None
+
+    clean_address = address_text.strip().lower()
+    
+    
+    formatted_query = f"{clean_address}, Bangladesh" if "bangladesh" not in clean_address else clean_address
+    cache_key = f"geo_cache:{formatted_query}"
+
+    try:
+        cached_coords = cache.get(cache_key)
+        if cached_coords:
+            return Point(cached_coords['lng'], cached_coords['lat'], srid=4326)
+    except (RedisConnectionError, ConnectionInterrupted, Exception) as e:
+        logger.warning(f"Redis unavailable, falling back to direct geocoding lookup: {e}")
+
+    geolocator = Nominatim(user_agent="rentaliq_app")
+    try:
+        geo_data = geolocator.geocode(formatted_query, country_codes='bd', timeout=5)
+        
+        if not geo_data and formatted_query != clean_address:
+            geo_data = geolocator.geocode(clean_address, country_codes='bd', timeout=5)
+
+        if geo_data:
+            coords = {'lat': geo_data.latitude, 'lng': geo_data.longitude}
+            try:
+                cache.set(cache_key, coords, timeout=604800)   # 7 days TTL
+            except Exception:
+                pass
+            return Point(geo_data.longitude, geo_data.latitude, srid=4326)
+    except Exception as e:
+        logger.error(f"Geocoding error for '{address_text}': {e}")
+
+    return None
