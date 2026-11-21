@@ -37,6 +37,10 @@ Explicitly disables global HTTP PUT requests to prevent full entity overwrites, 
 Strict permission classes controlling administrative actions—restricting Category CRUD operations exclusively to superusers/admins.
 
 ## Key Features
+### SSLCommerz Payment Gateway & Wallet Top-Up System:**
+* Integrates SSLCommerz (supporting bKash, Nagad, and Card payments in BDT) for pre-funded renter wallet top-ups.
+* Executes server-to-server `val_id` verification, atomic wallet crediting (`RentalWallet`), and browser redirect handling back to a dedicated React payment UI.
+  
 ### Event-Driven Late Penalty Engine (Celery + Redis):
 * **Asynchronous Polling:** Configured Celery Beat background workers running periodic tasks to poll active rentals past their return deadline.
 * **Automated State Transitions:** Automatically shifts booking states from `ACTIVE` to `OVERDUE` and computes progressive hourly/daily penalty deductions directly from the renter's held security deposit.
