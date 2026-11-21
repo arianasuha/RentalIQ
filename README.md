@@ -37,7 +37,7 @@ Explicitly disables global HTTP PUT requests to prevent full entity overwrites, 
 Strict permission classes controlling administrative actions—restricting Category CRUD operations exclusively to superusers/admins.
 
 ## Key Features
-### SSLCommerz Payment Gateway & Wallet Top-Up System:**
+### SSLCommerz Payment Gateway & Wallet Top-Up System:
 * Integrates SSLCommerz (supporting bKash, Nagad, and Card payments in BDT) for pre-funded renter wallet top-ups.
 * Executes server-to-server `val_id` verification, atomic wallet crediting (`RentalWallet`), and browser redirect handling back to a dedicated React payment UI.
   
